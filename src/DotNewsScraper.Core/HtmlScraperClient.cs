@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Net.Http;
 using System.Threading.Tasks;
 using HtmlAgilityPack;
@@ -10,9 +11,10 @@ namespace DotNewsScraper.Core
     /// </summary>
     public class HtmlScraperClient : IDisposable
     {
-        private readonly HttpClient _client;
+        // ソケット枯渇（Socket Exhaustion）を防ぐため、HttpClientをstatic readonlyで共有する
+        private static readonly HttpClient _client;
 
-        public HtmlScraperClient()
+        static HtmlScraperClient()
         {
             _client = new HttpClient();
             // 一般的なブラウザを偽装するUser-Agentを設定
@@ -24,15 +26,19 @@ namespace DotNewsScraper.Core
         /// </summary>
         public async Task<HtmlDocument> GetHtmlDocumentAsync(string url)
         {
-            string html = await _client.GetStringAsync(url);
+            // Euc-jpなどのエンコーディングにも自動対応させるため、Streamとして読み込む
+            var bytes = await _client.GetByteArrayAsync(url);
             var doc = new HtmlDocument();
-            doc.LoadHtml(html);
+            using (var stream = new MemoryStream(bytes))
+            {
+                doc.Load(stream, true); // true = 文字コード自動判別
+            }
             return doc;
         }
 
         public void Dispose()
         {
-            _client?.Dispose();
+            // 共有しているHttpClientのDisposeは行わない
         }
     }
 }

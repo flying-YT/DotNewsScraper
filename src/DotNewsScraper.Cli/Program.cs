@@ -1,7 +1,10 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Globalization;
+using CsvHelper;
 using DotNewsScraper.Core;
 
 namespace DotNewsScraper.Cli
@@ -14,10 +17,26 @@ namespace DotNewsScraper.Cli
             Console.WriteLine("      DotNewsScraper CLI Tool");
             Console.WriteLine("========================================\n");
 
-            // 1. 引数から出力先ディレクトリを取得（指定がない場合はカレントディレクトリ）
-            string outputDir = args.Length > 0 ? args[0] : Directory.GetCurrentDirectory();
-            
-            // 出力先ディレクトリが存在しない場合は作成する
+            // 引数のパース
+            string siteMode = "yahoo";
+            string outputDir = Directory.GetCurrentDirectory();
+
+            foreach (var arg in args)
+            {
+                if (arg.ToLower() == "--yahoo")
+                {
+                    siteMode = "yahoo";
+                }
+                else if (arg.ToLower() == "--livedoor")
+                {
+                    siteMode = "livedoor";
+                }
+                else if (!arg.StartsWith("--"))
+                {
+                    outputDir = arg;
+                }
+            }
+
             if (!Directory.Exists(outputDir))
             {
                 try
@@ -31,13 +50,23 @@ namespace DotNewsScraper.Cli
                 }
             }
 
-            // 2. 実行日時をもとにファイル名を生成
-            string fileName = $"yahoo_news_{DateTime.Now:yyyyMMddHHmm}.csv";
+            // 実行日時をもとにファイル名を生成
+            string fileName = $"{siteMode}_news_{DateTime.Now:yyyyMMddHHmm}.csv";
             string csvFilePath = Path.Combine(outputDir, fileName);
 
-            var scraper = new YahooNewsScraper();
+            // サイトに応じたインターフェースの実装クラスを選択
+            INewsScraper scraper;
+            if (siteMode == "livedoor")
+            {
+                scraper = new LivedoorNewsScraper();
+                Console.WriteLine("対象サイト: ライブドアニュース\n");
+            }
+            else
+            {
+                scraper = new YahooNewsScraper();
+                Console.WriteLine("対象サイト: Yahoo!ニュース\n");
+            }
             
-            // Core側の処理進捗をConsoleに表示するためのコールバックを渡す
             var articles = await scraper.ScrapeTopNewsAsync(message => 
             {
                 Console.WriteLine(message);
@@ -53,13 +82,11 @@ namespace DotNewsScraper.Cli
 
             try
             {
-                using (StreamWriter sw = new StreamWriter(csvFilePath, false, new UTF8Encoding(true)))
+                // CsvHelperを使用して安全にCSVを出力
+                using (var writer = new StreamWriter(csvFilePath, false, new UTF8Encoding(true)))
+                using (var csv = new CsvWriter(writer, CultureInfo.InvariantCulture))
                 {
-                    sw.WriteLine("\"Title\",\"Body\",\"Link\"");
-                    foreach (var article in articles)
-                    {
-                        sw.WriteLine($"\"{article.Title}\",\"{article.Body}\",\"{article.Url}\"");
-                    }
+                    csv.WriteRecords(articles);
                 }
                 Console.WriteLine($"完了しました！出力先: {Path.GetFullPath(csvFilePath)}");
             }

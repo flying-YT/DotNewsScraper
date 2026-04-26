@@ -8,7 +8,7 @@ using DotNewsScraper.Core.Models;
 
 namespace DotNewsScraper.Core
 {
-    public class YahooNewsScraper
+    public class YahooNewsScraper : INewsScraper
     {
         public YahooNewsScraper()
         {
@@ -16,13 +16,7 @@ namespace DotNewsScraper.Core
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         }
 
-        /// <summary>
-        /// Yahoo!ニュースのトップページから主要な記事を一括取得します。
-        /// </summary>
-        /// <param name="onProgress">進捗を通知するコールバック</param>
-        /// <param name="appendTo">取得した記事を追加する既存のリスト（省略時は新規作成）</param>
-        /// <returns>記事のリスト</returns>
-        public async Task<List<NewsArticle>> ScrapeTopNewsAsync(Action<string> onProgress = null, List<NewsArticle> appendTo = null)
+        public async Task<List<NewsArticle>> ScrapeTopNewsAsync(Action<string>? onProgress = null, List<NewsArticle>? appendTo = null)
         {
             var articles = appendTo ?? new List<NewsArticle>();
             string topUrl = "https://news.yahoo.co.jp/";
@@ -91,27 +85,21 @@ namespace DotNewsScraper.Core
             return articles;
         }
 
-        /// <summary>
-        /// 指定した詳細ページのURLから記事を1件取得します。
-        /// </summary>
-        /// <param name="articleUrl">詳細記事のURL (例: https://news.yahoo.co.jp/articles/...)</param>
-        /// <param name="onProgress">進捗を通知するコールバック</param>
-        /// <returns>取得した記事データ。取得失敗時はnull</returns>
-        public async Task<NewsArticle> ScrapeArticleAsync(string articleUrl, Action<string> onProgress = null)
+        public async Task<NewsArticle?> ScrapeArticleAsync(string articleUrl, Action<string>? onProgress = null)
         {
             using var scraper = new HtmlScraperClient();
             return await ScrapeArticleInternalAsync(articleUrl, null, onProgress, scraper);
         }
 
-        // 内部用の個別記事取得メソッド（クライアントを使い回すため）
-        private async Task<NewsArticle> ScrapeArticleInternalAsync(string articleUrl, string knownTitle, Action<string> onProgress, HtmlScraperClient scraper)
+        // 内部用の個別記事取得メソッド
+        private async Task<NewsArticle?> ScrapeArticleInternalAsync(string articleUrl, string? knownTitle, Action<string>? onProgress, HtmlScraperClient scraper)
         {
             try
             {
                 onProgress?.Invoke($"アクセス中 (詳細): {articleUrl}");
                 var articleDoc = await scraper.GetHtmlDocumentAsync(articleUrl);
 
-                string title = knownTitle;
+                string title = knownTitle ?? "";
                 if (string.IsNullOrEmpty(title))
                 {
                     var titleNode = articleDoc.DocumentNode.SelectSingleNode("//title");
@@ -130,8 +118,9 @@ namespace DotNewsScraper.Core
                                                            && !t.Contains("JavaScriptの設定")));
                 }
 
-                body = body.Replace("\r", "").Replace("\n", " ").Replace("\"", "\"\"");
-                title = title.Replace("\r", "").Replace("\n", " ").Replace("\"", "\"\"");
+                // CsvHelperを利用するため、不要な改行だけを消去（ダブルクォートのサニタイズはCsvHelperにお任せ）
+                body = body.Replace("\r", "").Replace("\n", " ");
+                title = title.Replace("\r", "").Replace("\n", " ");
 
                 return new NewsArticle { Title = title, Body = body, Url = articleUrl };
             }
