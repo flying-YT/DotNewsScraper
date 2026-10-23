@@ -29,12 +29,21 @@ dotnet run -- --livedoor
 
 # 対象サイトをYahoo!ニュースにして、出力先のディレクトリを指定する場合
 dotnet run -- --yahoo /path/to/output/directory
+
+# 実行ログをファイルにも出力する場合
+dotnet run -- --log-dir /path/to/log/directory /path/to/output/directory
 ```
 
 ### 実行結果
 処理が完了すると、指定したディレクトリ（指定がない場合はカレントディレクトリ）に以下のような名前のCSVファイルが生成されます。
 - `yahoo_news_yyyyMMddHHmm.csv`
 - `livedoor_news_yyyyMMddHHmm.csv`
+
+`--log-dir` を指定した場合は、進捗やエラーのメッセージが日時付きで以下のログファイルに追記されます（日ごと・サイトごとに1ファイル）。
+- `yahoo_yyyyMMdd.log`
+- `livedoor_yyyyMMdd.log`
+
+終了コードは、CSVを出力できた場合は `0`、記事が1件も取得できなかった場合やエラーの場合は `1` です。
 
 ---
 
