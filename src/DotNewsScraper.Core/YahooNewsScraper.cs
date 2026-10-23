@@ -65,8 +65,10 @@ namespace DotNewsScraper.Core
                         continue;
                     }
 
-                    var articleLinkNode = pickupDoc.DocumentNode.SelectSingleNode("//a[contains(@href, '/articles/')]");
-                    string articleUrl = articleLinkNode?.GetAttributeValue("href", "");
+                    // 画像ページ（/articles/.../images/000）へのリンクが先に並ぶことがあるため、見出しのリンクを優先する
+                    var articleLinkNode = pickupDoc.DocumentNode.SelectSingleNode("//a[contains(@data-cl-params, '_cl_vmodule:tpc_main;_cl_link:headline;')]")
+                        ?? pickupDoc.DocumentNode.SelectSingleNode("//a[contains(@href, '/articles/') and not(contains(@href, '/images/')) and (starts-with(@href, 'https://news.yahoo.co.jp/') or starts-with(@href, '/'))]");
+                    string articleUrl = articleLinkNode?.GetAttributeValue("href", "") ?? "";
 
                     if (string.IsNullOrEmpty(articleUrl))
                     {
