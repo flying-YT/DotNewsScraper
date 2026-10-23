@@ -11,6 +11,9 @@ namespace DotNewsScraper.Core
 {
     public class YahooNewsScraper : INewsScraper
     {
+        // 複数ページにわたる記事で取得する最大ページ数（ページャーの異常による無限ループ防止）
+        private const int MaxArticlePages = 10;
+
         public YahooNewsScraper()
         {
             // エンコーディングプロバイダの登録（Shift-JISなどの対策）
@@ -57,7 +60,7 @@ namespace DotNewsScraper.Core
                     if (finalUrl.Contains("/articles/"))
                     {
                         onProgress?.Invoke($"記事ページへリダイレクトされました: {finalUrl}");
-                        articles.Add(ParseArticle(pickupDoc, finalUrl, title));
+                        articles.Add(await ParseArticleAsync(pickupDoc, finalUrl, title, onProgress, scraper));
                         await Task.Delay(1000);
                         continue;
                     }
@@ -108,7 +111,7 @@ namespace DotNewsScraper.Core
             {
                 onProgress?.Invoke($"アクセス中 (詳細): {articleUrl}");
                 var articleDoc = await scraper.GetHtmlDocumentAsync(articleUrl);
-                return ParseArticle(articleDoc, articleUrl, knownTitle);
+                return await ParseArticleAsync(articleDoc, articleUrl, knownTitle, onProgress, scraper);
             }
             catch (Exception ex)
             {
@@ -117,8 +120,8 @@ namespace DotNewsScraper.Core
             }
         }
 
-        // 取得済みの記事ページHTMLからタイトルと本文を抽出する
-        private static NewsArticle ParseArticle(HtmlDocument articleDoc, string articleUrl, string? knownTitle)
+        // 取得済みの記事ページHTMLからタイトルと本文を抽出する（複数ページの記事は次ページ以降の本文も連結する）
+        private async Task<NewsArticle> ParseArticleAsync(HtmlDocument articleDoc, string articleUrl, string? knownTitle, Action<string>? onProgress, HtmlScraperClient scraper)
         {
             string title = knownTitle ?? "";
             if (string.IsNullOrEmpty(title))
@@ -127,6 +130,52 @@ namespace DotNewsScraper.Core
                 title = CleanTitle(titleNode?.InnerText);
             }
 
+            var bodyParts = new List<string> { ExtractBody(articleDoc) };
+
+            var pageDoc = articleDoc;
+            for (int page = 2; page <= MaxArticlePages; page++)
+            {
+                string? nextUrl = FindNextPageUrl(pageDoc);
+                if (nextUrl == null) break;
+
+                // サーバー負荷軽減の待機時間
+                await Task.Delay(1000);
+                try
+                {
+                    onProgress?.Invoke($"アクセス中 (詳細 {page}ページ目): {nextUrl}");
+                    pageDoc = await scraper.GetHtmlDocumentAsync(nextUrl);
+                }
+                catch (Exception ex)
+                {
+                    // 存在しないページへのリンクが残っている場合があるため、取得済みの本文で打ち切る
+                    onProgress?.Invoke($"{page}ページ目の取得に失敗したため、{page - 1}ページ目までの本文を使用します: {ex.Message}");
+                    break;
+                }
+                bodyParts.Add(ExtractBody(pageDoc));
+            }
+
+            string body = string.Join(" ", bodyParts.Where(b => b.Length > 0));
+
+            // CsvHelperを利用するため、不要な改行だけを消去（ダブルクォートのサニタイズはCsvHelperにお任せ）
+            body = body.Replace("\r", "").Replace("\n", " ");
+            title = title.Replace("\r", "").Replace("\n", " ");
+
+            return new NewsArticle { Title = title, Body = body, Url = articleUrl };
+        }
+
+        // ページャーの「次へ」リンクから次ページのURLを取得する（無ければnull）
+        private static string? FindNextPageUrl(HtmlDocument doc)
+        {
+            var nextNode = doc.DocumentNode.SelectSingleNode("//a[contains(@data-cl-params, '_cl_vmodule:page;_cl_link:next;')]");
+            string href = nextNode?.GetAttributeValue("href", "") ?? "";
+            if (string.IsNullOrEmpty(href)) return null;
+
+            return href.StartsWith("http") ? href : "https://news.yahoo.co.jp" + href;
+        }
+
+        // 1ページ分の記事本文を抽出する
+        private static string ExtractBody(HtmlDocument articleDoc)
+        {
             var bodyContainer = articleDoc.DocumentNode.SelectSingleNode("//div[contains(@class, 'article_body')]");
             var pNodes = bodyContainer?.SelectNodes(".//p");
 
@@ -145,11 +194,7 @@ namespace DotNewsScraper.Core
                                                        && !t.Contains("JavaScriptの設定")));
             }
 
-            // CsvHelperを利用するため、不要な改行だけを消去（ダブルクォートのサニタイズはCsvHelperにお任せ）
-            body = body.Replace("\r", "").Replace("\n", " ");
-            title = title.Replace("\r", "").Replace("\n", " ");
-
-            return new NewsArticle { Title = title, Body = body, Url = articleUrl };
+            return body;
         }
 
         // <title>からサイト名やエキスパート記事の付記（#エキスパートトピ（著者名）、 - エキスパート）を取り除く
