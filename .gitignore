@@ -364,3 +364,5 @@ FodyWeavers.xsd
 
 # OS specific files
 .DS_Store
+# スクレイピング結果の出力CSV
+*.csv
