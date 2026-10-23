@@ -26,14 +26,29 @@ namespace DotNewsScraper.Core
         /// </summary>
         public async Task<HtmlDocument> GetHtmlDocumentAsync(string url)
         {
+            var (doc, _) = await GetHtmlDocumentWithFinalUrlAsync(url);
+            return doc;
+        }
+
+        /// <summary>
+        /// 指定したURLからHTMLを取得し、HtmlDocumentとリダイレクト後の最終URLを返す
+        /// </summary>
+        public async Task<(HtmlDocument Document, string FinalUrl)> GetHtmlDocumentWithFinalUrlAsync(string url)
+        {
+            using var response = await _client.GetAsync(url);
+            response.EnsureSuccessStatusCode();
+
             // Euc-jpなどのエンコーディングにも自動対応させるため、Streamとして読み込む
-            var bytes = await _client.GetByteArrayAsync(url);
+            var bytes = await response.Content.ReadAsByteArrayAsync();
             var doc = new HtmlDocument();
             using (var stream = new MemoryStream(bytes))
             {
                 doc.Load(stream, true); // true = 文字コード自動判別
             }
-            return doc;
+
+            // HttpClientはリダイレクトを自動追従するため、最終的なリクエストURLを取得する
+            string finalUrl = response.RequestMessage?.RequestUri?.ToString() ?? url;
+            return (doc, finalUrl);
         }
 
         public void Dispose()
