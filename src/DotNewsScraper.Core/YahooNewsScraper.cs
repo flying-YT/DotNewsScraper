@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using HtmlAgilityPack;
 using DotNewsScraper.Core.Models;
@@ -47,10 +48,19 @@ namespace DotNewsScraper.Core
                 try
                 {
                     onProgress?.Invoke($"\nアクセス中 (pickup): {pickupUrl}");
-                    var pickupDoc = await scraper.GetHtmlDocumentAsync(pickupUrl);
+                    var (pickupDoc, finalUrl) = await scraper.GetHtmlDocumentWithFinalUrlAsync(pickupUrl);
 
                     var titleNode = pickupDoc.DocumentNode.SelectSingleNode("//title");
-                    string title = titleNode?.InnerText.Replace(" - Yahoo!ニュース", "").Trim() ?? "タイトル不明";
+                    string title = CleanTitle(titleNode?.InnerText);
+
+                    // pickupから記事ページ（例: /expert/articles/...）へ直接リダイレクトされた場合は、そのページから本文を取得する
+                    if (finalUrl.Contains("/articles/"))
+                    {
+                        onProgress?.Invoke($"記事ページへリダイレクトされました: {finalUrl}");
+                        articles.Add(ParseArticle(pickupDoc, finalUrl, title));
+                        await Task.Delay(1000);
+                        continue;
+                    }
 
                     var articleLinkNode = pickupDoc.DocumentNode.SelectSingleNode("//a[contains(@href, '/articles/')]");
                     string articleUrl = articleLinkNode?.GetAttributeValue("href", "");
@@ -98,37 +108,58 @@ namespace DotNewsScraper.Core
             {
                 onProgress?.Invoke($"アクセス中 (詳細): {articleUrl}");
                 var articleDoc = await scraper.GetHtmlDocumentAsync(articleUrl);
-
-                string title = knownTitle ?? "";
-                if (string.IsNullOrEmpty(title))
-                {
-                    var titleNode = articleDoc.DocumentNode.SelectSingleNode("//title");
-                    title = titleNode?.InnerText.Replace(" - Yahoo!ニュース", "").Trim() ?? "タイトル不明";
-                }
-
-                var bodyContainer = articleDoc.DocumentNode.SelectSingleNode("//div[contains(@class, 'article_body')]");
-                var pNodes = bodyContainer?.SelectNodes(".//p");
-                
-                string body = "";
-                if (pNodes != null)
-                {
-                    body = string.Join(" ", pNodes.Select(n => n.InnerText.Trim())
-                                                  .Where(t => t.Length > 0 
-                                                           && !t.Contains("JavaScriptが無効")
-                                                           && !t.Contains("JavaScriptの設定")));
-                }
-
-                // CsvHelperを利用するため、不要な改行だけを消去（ダブルクォートのサニタイズはCsvHelperにお任せ）
-                body = body.Replace("\r", "").Replace("\n", " ");
-                title = title.Replace("\r", "").Replace("\n", " ");
-
-                return new NewsArticle { Title = title, Body = body, Url = articleUrl };
+                return ParseArticle(articleDoc, articleUrl, knownTitle);
             }
             catch (Exception ex)
             {
                 onProgress?.Invoke($"個別記事取得エラー: {ex.Message}");
                 return null;
             }
+        }
+
+        // 取得済みの記事ページHTMLからタイトルと本文を抽出する
+        private static NewsArticle ParseArticle(HtmlDocument articleDoc, string articleUrl, string? knownTitle)
+        {
+            string title = knownTitle ?? "";
+            if (string.IsNullOrEmpty(title))
+            {
+                var titleNode = articleDoc.DocumentNode.SelectSingleNode("//title");
+                title = CleanTitle(titleNode?.InnerText);
+            }
+
+            var bodyContainer = articleDoc.DocumentNode.SelectSingleNode("//div[contains(@class, 'article_body')]");
+            var pNodes = bodyContainer?.SelectNodes(".//p");
+
+            // エキスパート記事（/expert/articles/）は article_body が無く、段落に data-role="paragraph" が付く
+            if (pNodes == null)
+            {
+                pNodes = articleDoc.DocumentNode.SelectNodes("//article//p[@data-role='paragraph']");
+            }
+
+            string body = "";
+            if (pNodes != null)
+            {
+                body = string.Join(" ", pNodes.Select(n => n.InnerText.Trim())
+                                              .Where(t => t.Length > 0
+                                                       && !t.Contains("JavaScriptが無効")
+                                                       && !t.Contains("JavaScriptの設定")));
+            }
+
+            // CsvHelperを利用するため、不要な改行だけを消去（ダブルクォートのサニタイズはCsvHelperにお任せ）
+            body = body.Replace("\r", "").Replace("\n", " ");
+            title = title.Replace("\r", "").Replace("\n", " ");
+
+            return new NewsArticle { Title = title, Body = body, Url = articleUrl };
+        }
+
+        // <title>からサイト名やエキスパート記事の付記（#エキスパートトピ（著者名）、 - エキスパート）を取り除く
+        private static string CleanTitle(string? rawTitle)
+        {
+            if (string.IsNullOrWhiteSpace(rawTitle)) return "タイトル不明";
+
+            string title = rawTitle.Replace(" - Yahoo!ニュース", "").Replace(" - エキスパート", "");
+            title = Regex.Replace(title, @"\s*#エキスパートトピ（[^）]*）", "");
+            return title.Trim();
         }
     }
 }
