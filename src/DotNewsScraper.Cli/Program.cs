@@ -11,7 +11,7 @@ namespace DotNewsScraper.Cli
 {
     class Program
     {
-        static async Task Main(string[] args)
+        static async Task<int> Main(string[] args)
         {
             Console.WriteLine("========================================");
             Console.WriteLine("      DotNewsScraper CLI Tool");
@@ -20,9 +20,11 @@ namespace DotNewsScraper.Cli
             // 引数のパース
             string siteMode = "yahoo";
             string outputDir = Directory.GetCurrentDirectory();
+            string? logDir = null;
 
-            foreach (var arg in args)
+            for (int i = 0; i < args.Length; i++)
             {
+                string arg = args[i];
                 if (arg.ToLower() == "--yahoo")
                 {
                     siteMode = "yahoo";
@@ -31,12 +33,57 @@ namespace DotNewsScraper.Cli
                 {
                     siteMode = "livedoor";
                 }
+                else if (arg.ToLower() == "--log-dir")
+                {
+                    if (i + 1 >= args.Length)
+                    {
+                        Console.WriteLine("--log-dir の後にログの出力先ディレクトリを指定してください。");
+                        return 1;
+                    }
+                    logDir = args[++i];
+                }
                 else if (!arg.StartsWith("--"))
                 {
                     outputDir = arg;
                 }
             }
 
+            // ログファイルは日ごと・サイトごとに1ファイルへ追記する
+            string? logFilePath = null;
+            if (logDir != null)
+            {
+                try
+                {
+                    Directory.CreateDirectory(logDir);
+                    logFilePath = Path.Combine(logDir, $"{siteMode}_{DateTime.Now:yyyyMMdd}.log");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"ログ出力先ディレクトリの作成に失敗しました: {ex.Message}");
+                    return 1;
+                }
+            }
+            var logger = new RunLogger(logFilePath);
+
+            logger.Log("===== 処理開始 =====");
+            try
+            {
+                return await RunAsync(siteMode, outputDir, logger);
+            }
+            catch (Exception ex)
+            {
+                // 想定外の例外もログに残してから終了する
+                logger.Log($"予期しないエラーが発生しました: {ex}");
+                return 1;
+            }
+            finally
+            {
+                logger.Log("===== 処理終了 =====");
+            }
+        }
+
+        static async Task<int> RunAsync(string siteMode, string outputDir, RunLogger logger)
+        {
             if (!Directory.Exists(outputDir))
             {
                 try
@@ -45,8 +92,8 @@ namespace DotNewsScraper.Cli
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"出力先ディレクトリの作成に失敗しました: {ex.Message}");
-                    return;
+                    logger.Log($"出力先ディレクトリの作成に失敗しました: {ex.Message}");
+                    return 1;
                 }
             }
 
@@ -59,26 +106,23 @@ namespace DotNewsScraper.Cli
             if (siteMode == "livedoor")
             {
                 scraper = new LivedoorNewsScraper();
-                Console.WriteLine("対象サイト: ライブドアニュース\n");
+                logger.Log("対象サイト: ライブドアニュース\n");
             }
             else
             {
                 scraper = new YahooNewsScraper();
-                Console.WriteLine("対象サイト: Yahoo!ニュース\n");
+                logger.Log("対象サイト: Yahoo!ニュース\n");
             }
-            
-            var articles = await scraper.ScrapeTopNewsAsync(message => 
-            {
-                Console.WriteLine(message);
-            });
+
+            var articles = await scraper.ScrapeTopNewsAsync(logger.Log);
 
             if (articles.Count == 0)
             {
-                Console.WriteLine("\n取得できた記事はありませんでした。");
-                return;
+                logger.Log("\n取得できた記事はありませんでした。");
+                return 1;
             }
 
-            Console.WriteLine($"\n{articles.Count} 件の記事を取得しました。CSVを出力します...");
+            logger.Log($"\n{articles.Count} 件の記事を取得しました。CSVを出力します...");
 
             try
             {
@@ -88,11 +132,13 @@ namespace DotNewsScraper.Cli
                 {
                     csv.WriteRecords(articles);
                 }
-                Console.WriteLine($"完了しました！出力先: {Path.GetFullPath(csvFilePath)}");
+                logger.Log($"完了しました！出力先: {Path.GetFullPath(csvFilePath)}");
+                return 0;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"CSV出力エラー: {ex.Message}");
+                logger.Log($"CSV出力エラー: {ex.Message}");
+                return 1;
             }
         }
     }
